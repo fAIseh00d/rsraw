@@ -8,13 +8,20 @@ fn main() {
 
 fn build(out_dir: impl AsRef<Path>) {
     let mut libraw = cc::Build::new();
-    let compiler = libraw.get_compiler();
-    if compiler.is_like_msvc() {
-        panic!("MSVC is not supported");
-    }
+    // Previously this build script bailed on any MSVC-like compiler.
+    // clang-cl and native cl.exe both satisfy `is_like_msvc()`, but
+    // both compile LibRaw fine with the right defines. On Windows we
+    // need `LIBRAW_NODLL` so the `DllDef` macro in libraw_types.h
+    // expands to nothing — without it, `__declspec(dllimport)`
+    // attaches to static-linked symbols and clang-cl/cl reject it.
+    let target = env::var("TARGET").unwrap_or_default();
+    let is_windows = target.contains("windows");
 
     libraw.cpp(true);
     libraw.include("LibRaw/");
+    if is_windows {
+        libraw.define("LIBRAW_NODLL", None);
+    }
 
     libraw.file("LibRaw/src/decoders/canon_600.cpp");
     libraw.file("LibRaw/src/decoders/crx.cpp");
@@ -103,8 +110,11 @@ fn build(out_dir: impl AsRef<Path>) {
     libraw.flag_if_supported("-Wno-unused-result");
     libraw.flag_if_supported("-Wno-format-overflow");
 
-    // thread safety
-    libraw.flag("-pthread");
+    // thread safety. `flag_if_supported` instead of `flag` because
+    // `-pthread` is a GCC/clang option — on MSVC / clang-cl it would
+    // error as unknown. OS-thread support on Windows comes from
+    // msvcrt/vcruntime by default; no extra flag needed.
+    libraw.flag_if_supported("-pthread");
     libraw.compile("raw");
 
     println!(
