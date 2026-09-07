@@ -37,6 +37,13 @@ fn build(out_dir: impl AsRef<Path>) {
     libraw.file("LibRaw/src/decoders/smal.cpp");
     libraw.file("LibRaw/src/decoders/unpack.cpp");
     libraw.file("LibRaw/src/decoders/unpack_thumb.cpp");
+    // New in LibRaw 0.22 — the decoders that were split out of the existing
+    // ones. Omitting them links, and then fails at RUNTIME on exactly the
+    // bodies the bump was for.
+    libraw.file("LibRaw/src/decoders/olympus14.cpp");
+    libraw.file("LibRaw/src/decoders/pana8.cpp");
+    libraw.file("LibRaw/src/decoders/sonycc.cpp");
+    libraw.file("LibRaw/src/decompressors/losslessjpeg.cpp");
     libraw.file("LibRaw/src/demosaic/aahd_demosaic.cpp");
     libraw.file("LibRaw/src/demosaic/ahd_demosaic.cpp");
     libraw.file("LibRaw/src/demosaic/dcb_demosaic.cpp");
