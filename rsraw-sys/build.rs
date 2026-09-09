@@ -6,6 +6,77 @@ fn main() {
     build(&dir);
 }
 
+/// Turn on LibRaw's own OpenMP, which it compiles away by default here.
+///
+/// LibRaw carries `#pragma omp parallel for` in `ahd_demosaic.cpp`,
+/// `dcb_demosaic.cpp` and the postprocessing, and gates them on its own
+/// `LIBRAW_USE_OPENMP` — which it defines itself the moment `_OPENMP` exists.
+/// Without the compiler flag none of that is an opt-out, it simply never
+/// compiles: measured 99 % CPU on a 28-core box, one core, always.
+///
+/// Worth 4.4x on a full-size demosaic (81 MP Panasonic DC-G9: 8652 ms to
+/// 1987 ms, saturating at 16 threads). It stops short of linear because
+/// unpack is serial and is 25-35 % of the total.
+///
+/// **Three targets, three spellings, and one of them is not a flag.** gcc and
+/// Linux clang take `-fopenmp` and link `libgomp`. Apple clang REJECTS that
+/// spelling and needs `-Xpreprocessor -fopenmp` against a `libomp` it does not
+/// ship — keg-only under Homebrew, so both the include and the link path have
+/// to be named explicitly. MSVC wants `/openmp` and is deliberately left out
+/// until someone measures it there.
+///
+/// **A missing libomp is not an error.** A mac without it still builds, just
+/// single-threaded, with a warning — failing the build over a performance
+/// flag would be worse than the slow decode it prevents.
+fn enable_openmp(libraw: &mut cc::Build, target: &str, is_windows: bool) {
+    if is_windows {
+        // MSVC: /openmp, plus a decision about shipping vcomp. Not yet.
+        return;
+    }
+    if target.contains("apple") {
+        let Some(prefix) = libomp_prefix() else {
+            println!(
+                "cargo:warning=libomp not found — LibRaw's demosaic will run \
+                 single-threaded. `brew install libomp`, or set LIBOMP_PREFIX."
+            );
+            return;
+        };
+        libraw.flag("-Xpreprocessor").flag("-fopenmp");
+        libraw.include(format!("{prefix}/include"));
+        println!("cargo:rustc-link-search=native={prefix}/lib");
+        println!("cargo:rustc-link-lib=dylib=omp");
+    } else {
+        libraw.flag("-fopenmp");
+        println!("cargo:rustc-link-lib=dylib=gomp");
+    }
+}
+
+/// Where Homebrew put the keg-only `libomp`.
+///
+/// `LIBOMP_PREFIX` first so a CI image or a non-Homebrew install can say;
+/// then `brew --prefix`, which is the only thing that knows on a machine with
+/// a relocated prefix; then the two standard ones, Apple Silicon before Intel.
+fn libomp_prefix() -> Option<String> {
+    println!("cargo:rerun-if-env-changed=LIBOMP_PREFIX");
+    if let Ok(p) = env::var("LIBOMP_PREFIX") {
+        if Path::new(&p).join("include/omp.h").exists() {
+            return Some(p);
+        }
+    }
+    if let Ok(out) = std::process::Command::new("brew").args(["--prefix", "libomp"]).output() {
+        if out.status.success() {
+            let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !p.is_empty() && Path::new(&p).join("include/omp.h").exists() {
+                return Some(p);
+            }
+        }
+    }
+    ["/opt/homebrew/opt/libomp", "/usr/local/opt/libomp"]
+        .into_iter()
+        .find(|p| Path::new(p).join("include/omp.h").exists())
+        .map(ToOwned::to_owned)
+}
+
 fn build(out_dir: impl AsRef<Path>) {
     let mut libraw = cc::Build::new();
     // Previously this build script bailed on any MSVC-like compiler.
@@ -36,6 +107,7 @@ fn build(out_dir: impl AsRef<Path>) {
     // thumbnail of a few hundred bytes -- so a demosaic is the only way to
     // show one, and there is no second decoder to fall back to.
     libraw.define("USE_X3FTOOLS", None);
+    enable_openmp(&mut libraw, &target, is_windows);
 
     libraw.file("LibRaw/src/decoders/canon_600.cpp");
     libraw.file("LibRaw/src/decoders/crx.cpp");
