@@ -23,6 +23,20 @@ fn build(out_dir: impl AsRef<Path>) {
         libraw.define("LIBRAW_NODLL", None);
     }
 
+    // **Sigma X3F is compiled out unless this is defined**, even though the
+    // two `src/x3f/` translation units below are already in the build:
+    // `x3f_parse_process.cpp` is one `#ifdef` on this macro, `open.cpp` and
+    // `thumb_utils.cpp` guard their X3F branches on it, and `identify.cpp`
+    // says so in a comment -- "parse_x3f(); /* Does nothing if USE_X3FTOOLS
+    // is not defined */". Without it LibRaw refuses every Foveon file while
+    // still compiling the code that would read one.
+    //
+    // It matters because a Foveon body from before the Merrill era embeds NO
+    // JPEG at all -- a Sigma SD9 or SD10 carries only an uncompressed
+    // thumbnail of a few hundred bytes -- so a demosaic is the only way to
+    // show one, and there is no second decoder to fall back to.
+    libraw.define("USE_X3FTOOLS", None);
+
     libraw.file("LibRaw/src/decoders/canon_600.cpp");
     libraw.file("LibRaw/src/decoders/crx.cpp");
     libraw.file("LibRaw/src/decoders/decoders_dcraw.cpp");
